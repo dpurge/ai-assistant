@@ -29,7 +29,7 @@ from .prompt import (
 
 
 text_writer = Agent(
-    name="language_tutor_text_writer",
+    name="text_writer",
     model=WORKER_MODEL,
     instruction=TEXT_WRITER,
     output_key="text",

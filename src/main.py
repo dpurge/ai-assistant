@@ -9,17 +9,16 @@ from app.runner import TutorRunner
 
 app = get_fast_api_app(agents_dir="src/app", web=True)
 
-LESSON_FORMATTER_AGENT_NAME = "language_tutor_lesson_formatter"
-INTERNAL_LESSON_AGENT_NAMES = {
-    "language_tutor_lesson_pipeline",
-    "language_tutor_text_writer",
-    "language_tutor_language_metadata_writer",
-    "language_tutor_text_analyzer",
-    "language_tutor_text_transcription",
-    "language_tutor_text_translation",
-    "language_tutor_model_writer",
-    "language_tutor_vocabulary_writer",
-    "language_tutor_exercise_writer",
+RESPONSE_AGENT_NAME = "lesson_pipeline"
+INTERNAL_AGENT_NAMES = {
+    "lesson_writer",
+    "text_writer",
+    "metadata_writer",
+    "text_transcription_writer",
+    "text_translation_writer",
+    "model_writer",
+    "vocabulary_writer",
+    "exercise_writer",
 }
 
 
@@ -49,9 +48,9 @@ async def chat_endpoint(user_message: str):
             if not text_parts:
                 continue
 
-            if event.author == LESSON_FORMATTER_AGENT_NAME:
+            if event.author == RESPONSE_AGENT_NAME:
                 formatter_parts.extend(text_parts)
-            elif event.author not in INTERNAL_LESSON_AGENT_NAMES:
+            elif event.author not in INTERNAL_AGENT_NAMES:
                 latest_public_parts = text_parts
                 if _is_final_response(event):
                     fallback_parts = text_parts
