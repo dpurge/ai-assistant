@@ -3,7 +3,7 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ai-tutor"
+name = "ai-assistant"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
