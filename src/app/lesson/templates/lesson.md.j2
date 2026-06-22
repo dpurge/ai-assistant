@@ -1,0 +1,40 @@
+{% if lesson.text and lesson.text.body %}
+## Text
+
+{{ lesson.text.body }}
+
+{% endif %}
+{% if lesson.transcription and lesson.transcription.body %}
+## Transcription{% if lesson.transcription.system %} ({{ lesson.transcription.system }}){% endif %}
+
+{{ lesson.transcription.body }}
+
+{% endif %}
+{% if lesson.translation and lesson.translation.body %}
+## Translation
+
+{{ lesson.translation.body }}
+
+{% endif %}
+{% if lesson.vocabulary and lesson.vocabulary.body %}
+## Vocabulary
+
+{{ lesson.vocabulary.body }}
+
+{% endif %}
+{% if lesson.models and lesson.models.body %}
+## Model phrases
+
+{{ lesson.models.body }}
+
+{% endif %}
+{% if lesson.exercises %}
+## Exercises
+
+{% for exercise in lesson.exercises %}
+### Exercise {{ loop.index }}
+
+{{ exercise.body }}
+
+{% endfor %}
+{% endif %}

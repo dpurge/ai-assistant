@@ -1,0 +1,27 @@
+services:
+  assistant:
+    build: .
+    image: ai-assistant:latest
+    container_name: ai-assistant
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Default to talking to an Ollama on the host. Override in ``.env``.
+      OLLAMA_HOST: ${OLLAMA_HOST:-host.docker.internal}
+      OLLAMA_PORT: ${OLLAMA_PORT:-11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Uncomment to run Ollama in-network instead of on the host.
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+
+# volumes:
+#   ollama_data:

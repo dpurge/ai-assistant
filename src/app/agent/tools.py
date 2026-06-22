@@ -1,21 +1,34 @@
-import os
+"""Tools available to the language-tutor pipeline.
+
+``read_web_page`` is async because it runs inside ADK's asyncio loop; using
+``httpx.AsyncClient`` keeps a slow upstream from blocking concurrent chats.
+``read_file`` / ``write_file`` stay synchronous - stdlib has no async file API
+and lesson source files are small.
+"""
+
+from __future__ import annotations
+
+import logging
 import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import google.auth
 import httpx
 from bs4 import BeautifulSoup
 from google.adk.tools import ToolContext
 
+from app.agent.state import (
+    TOOL_CALL_ERROR_MESSAGE_KEY,
+    TOOL_CALL_FAILED_KEY,
+    clear_tool_call_status,
+    mark_tool_call_failed,
+)
+from app.config import get_settings
 
-MAX_PAGE_TEXT_CHARS = 100_000
-MAX_FILE_TEXT_CHARS = 100_000
-FETCH_TIMEOUT_SECONDS = 10.0
-VERIFY_SSL_CERTIFICATES = False
-TOOL_CALL_FAILED_KEY = "tool_call_failed"
-TOOL_CALL_ERROR_MESSAGE_KEY = "tool_call_error_message"
+logger = logging.getLogger(__name__)
+
+
 USER_AGENT = (
     "Mozilla/5.0 (compatible; ai-tutor/0.1; "
     "+https://localhost.localdomain/ai-tutor)"
@@ -36,21 +49,13 @@ NOISY_SELECTORS = (
     "canvas",
 )
 
-
-# def setup(vertexai=True):
-#     if vertexai:
-#         _, project_id = google.auth.default()
-#         os.environ.setdefault("GOOGLE_CLOUD_PROJECT", project_id)
-#         os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "global")
-#         os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "True")
-#         log("Set up environment for Vertex AI")
-#     else:
-#         os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "False")
-#         log("Set up environment for Gemini API")
-
-
-# def log(message: str):
-#     return None
+__all__ = [
+    "TOOL_CALL_ERROR_MESSAGE_KEY",
+    "TOOL_CALL_FAILED_KEY",
+    "read_file",
+    "read_web_page",
+    "write_file",
+]
 
 
 def read_file(filename: str, tool_context: ToolContext) -> dict[str, Any]:
@@ -66,7 +71,9 @@ def read_file(filename: str, tool_context: ToolContext) -> dict[str, Any]:
         include filename, content, and truncated. Error results include
         error_message.
     """
+    settings = get_settings()
     path = Path(filename).expanduser()
+    logger.info("read_file: %s", path)
     try:
         if path.is_dir():
             return _tool_error(
@@ -98,11 +105,13 @@ def read_file(filename: str, tool_context: ToolContext) -> dict[str, Any]:
             user_action="Please provide another file path or paste the text.",
         )
 
-    truncated = len(content) > MAX_FILE_TEXT_CHARS
+    max_chars = settings.max_file_text_chars
+    truncated = len(content) > max_chars
     if truncated:
-        content = content[:MAX_FILE_TEXT_CHARS].rstrip()
+        content = content[:max_chars].rstrip()
 
-    _record_tool_success(tool_context)
+    clear_tool_call_status(tool_context.state)
+    logger.info("read_file ok: %s (%d chars, truncated=%s)", path, len(content), truncated)
     return {
         "status": "success",
         "filename": str(path),
@@ -130,6 +139,7 @@ def write_file(
         include filename and bytes_written. Error results include error_message.
     """
     path = Path(filename).expanduser()
+    logger.info("write_file: %s", path)
     try:
         if path.exists() and path.is_dir():
             return _tool_error(
@@ -153,15 +163,17 @@ def write_file(
             user_action="Please provide another writable file path.",
         )
 
-    _record_tool_success(tool_context)
+    clear_tool_call_status(tool_context.state)
+    bytes_written = len(content.encode("utf-8"))
+    logger.info("write_file ok: %s (%d bytes)", path, bytes_written)
     return {
         "status": "success",
         "filename": str(path),
-        "bytes_written": len(content.encode("utf-8")),
+        "bytes_written": bytes_written,
     }
 
 
-def read_web_page(url: str, tool_context: ToolContext) -> dict[str, Any]:
+async def read_web_page(url: str, tool_context: ToolContext) -> dict[str, Any]:
     """Fetches a web page and returns readable text for language lesson writing.
 
     Use this tool when the user provides an HTTP or HTTPS URL and wants the
@@ -175,6 +187,7 @@ def read_web_page(url: str, tool_context: ToolContext) -> dict[str, Any]:
         A dictionary with status 'success' or 'error'. Successful results include
         url, title, content, and truncated. Error results include error_message.
     """
+    settings = get_settings()
     normalized_url = url.strip()
     parsed_url = urlparse(normalized_url)
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
@@ -187,14 +200,15 @@ def read_web_page(url: str, tool_context: ToolContext) -> dict[str, Any]:
             user_action="Please paste the text or provide another URL.",
         )
 
+    logger.info("read_web_page: %s", normalized_url)
     try:
-        with httpx.Client(
+        async with httpx.AsyncClient(
             follow_redirects=True,
-            timeout=FETCH_TIMEOUT_SECONDS,
-            verify=VERIFY_SSL_CERTIFICATES,
+            timeout=settings.fetch_timeout_seconds,
+            verify=settings.verify_ssl_certificates,
             headers={"User-Agent": USER_AGENT},
         ) as client:
-            response = client.get(normalized_url)
+            response = await client.get(normalized_url)
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         return _tool_error(
@@ -238,11 +252,19 @@ def read_web_page(url: str, tool_context: ToolContext) -> dict[str, Any]:
             title=title,
         )
 
-    truncated = len(content) > MAX_PAGE_TEXT_CHARS
+    max_chars = settings.max_page_text_chars
+    truncated = len(content) > max_chars
     if truncated:
-        content = content[:MAX_PAGE_TEXT_CHARS].rstrip()
+        content = content[:max_chars].rstrip()
 
-    _record_tool_success(tool_context)
+    clear_tool_call_status(tool_context.state)
+    logger.info(
+        "read_web_page ok: %s (title=%r, %d chars, truncated=%s)",
+        response.url,
+        title,
+        len(content),
+        truncated,
+    )
 
     return {
         "status": "success",
@@ -251,11 +273,6 @@ def read_web_page(url: str, tool_context: ToolContext) -> dict[str, Any]:
         "content": content,
         "truncated": truncated,
     }
-
-
-def _record_tool_success(tool_context: ToolContext) -> None:
-    tool_context.state[TOOL_CALL_FAILED_KEY] = False
-    tool_context.state[TOOL_CALL_ERROR_MESSAGE_KEY] = ""
 
 
 def _tool_error(
@@ -270,8 +287,8 @@ def _tool_error(
     title: str | None = None,
 ) -> dict[str, Any]:
     user_message = f"{failure_summary}: {error_message} {user_action}"
-    tool_context.state[TOOL_CALL_FAILED_KEY] = True
-    tool_context.state[TOOL_CALL_ERROR_MESSAGE_KEY] = user_message
+    mark_tool_call_failed(tool_context.state, user_message)
+    logger.warning("%s failed: %s", tool_name, error_message)
 
     result = {
         "status": "error",
@@ -286,6 +303,11 @@ def _tool_error(
         result["title"] = title
 
     return result
+
+
+def _record_tool_success(tool_context: ToolContext) -> None:
+    """Backwards-compatible shim used by the test suite."""
+    clear_tool_call_status(tool_context.state)
 
 
 def _is_text_content_type(content_type: str) -> bool:
@@ -326,3 +348,16 @@ def _clean_text(text: str) -> str:
             normalized_lines.append(normalized_line)
 
     return "\n".join(normalized_lines)
+
+
+def _get_max_page_text_chars() -> int:
+    return get_settings().max_page_text_chars
+
+
+def _get_max_file_text_chars() -> int:
+    return get_settings().max_file_text_chars
+
+
+# Backwards-compatible aliases for tests that read the limits as module attrs.
+MAX_PAGE_TEXT_CHARS = _get_max_page_text_chars()
+MAX_FILE_TEXT_CHARS = _get_max_file_text_chars()

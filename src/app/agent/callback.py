@@ -1,35 +1,34 @@
 from google.adk.agents.callback_context import CallbackContext
 from google.genai import types
 
-from .tools import (
-    TOOL_CALL_ERROR_MESSAGE_KEY,
-    TOOL_CALL_FAILED_KEY,
+from .state import (
+    clear_tool_call_status,
+    get_tool_call_status,
+    mark_tool_call_failed,
 )
 
 
 def clear_tool_error(callback_context: CallbackContext):
-    callback_context.state[TOOL_CALL_FAILED_KEY] = False
-    callback_context.state[TOOL_CALL_ERROR_MESSAGE_KEY] = ""
+    clear_tool_call_status(callback_context.state)
     return None
 
 
 def skip_if_tool_failed(callback_context: CallbackContext):
-    if not callback_context.state.get(TOOL_CALL_FAILED_KEY):
+    if not get_tool_call_status(callback_context.state).failed:
         return None
-
     return types.Content(role="model", parts=[types.Part(text="")])
 
 
 def return_tool_error(callback_context: CallbackContext):
-    if not callback_context.state.get(TOOL_CALL_FAILED_KEY):
+    status = get_tool_call_status(callback_context.state)
+    if not status.failed:
         return None
 
-    message = callback_context.state.get(TOOL_CALL_ERROR_MESSAGE_KEY) or (
+    message = status.error_message or (
         "The requested tool call failed. Please provide different input and try "
         "again."
     )
     return types.Content(role="model", parts=[types.Part(text=message)])
-
 
 
 SOURCE_LANGUAGE_CLARIFICATION_PREFIX = "SOURCE_LANGUAGE_CLARIFICATION_NEEDED:"
@@ -53,7 +52,7 @@ def stop_if_source_language_unclear(callback_context: CallbackContext):
             continue
 
         found_clarification = True
-        message = output[len(SOURCE_LANGUAGE_CLARIFICATION_PREFIX) :].strip()
+        message = output[len(SOURCE_LANGUAGE_CLARIFICATION_PREFIX):].strip()
         break
 
     if not found_clarification:
@@ -61,6 +60,5 @@ def stop_if_source_language_unclear(callback_context: CallbackContext):
     if not message:
         message = "What is the source language of the input text?"
 
-    callback_context.state[TOOL_CALL_FAILED_KEY] = True
-    callback_context.state[TOOL_CALL_ERROR_MESSAGE_KEY] = message
+    mark_tool_call_failed(callback_context.state, message)
     return None

@@ -1,12 +1,10 @@
-import os
 from google.adk.models.lite_llm import LiteLlm
 
-OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'localhost')
-API_BASE=f"http://{OLLAMA_HOST}:11434"
+from app.config import get_settings
+
+_settings = get_settings()
 
 WORKER_MODEL = LiteLlm(
-    model="ollama_chat/gemma4:31b",
-    api_base=API_BASE,
+    model=_settings.ollama_model,
+    api_base=_settings.ollama_api_base,
 )
-
-# WORKER_MODEL = "gemini-2.5-flash"
